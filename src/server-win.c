@@ -186,10 +186,10 @@ static void *listen_main(void *param)
 	HANDLE connect_event = CreateEventW(NULL, TRUE, FALSE, NULL);
 
 	for (;;) {
-		HANDLE pipe = CreateNamedPipeW(PIPE_NAME, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
-					       PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT |
-						       PIPE_REJECT_REMOTE_CLIENTS,
-					       PIPE_UNLIMITED_INSTANCES, BUFFER_SIZE, BUFFER_SIZE, 0, &sa);
+		HANDLE pipe =
+			CreateNamedPipeW(PIPE_NAME, PIPE_ACCESS_DUPLEX | FILE_FLAG_OVERLAPPED,
+					 PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
+					 PIPE_UNLIMITED_INSTANCES, BUFFER_SIZE, BUFFER_SIZE, 0, &sa);
 		if (pipe == INVALID_HANDLE_VALUE) {
 			obs_log(LOG_ERROR, "CreateNamedPipe failed (%lu)", GetLastError());
 			break;
