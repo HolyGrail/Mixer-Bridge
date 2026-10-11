@@ -34,6 +34,30 @@ if(ENABLE_QT)
   )
 endif()
 
-target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c)
+add_library(
+  vendored-deps
+  STATIC
+  deps/libebur128/ebur128.c
+  deps/cjson/cJSON.c
+)
+target_include_directories(
+  vendored-deps
+  PUBLIC deps/libebur128 deps/cjson
+  PRIVATE deps/libebur128/queue
+)
+set_target_properties(vendored-deps PROPERTIES FOLDER deps POSITION_INDEPENDENT_CODE ON)
+# 同梱ライブラリには自前の警告設定を当てない
+target_compile_definitions(vendored-deps PRIVATE _USE_MATH_DEFINES _CRT_SECURE_NO_WARNINGS)
+target_compile_options(vendored-deps PRIVATE $<$<C_COMPILER_ID:MSVC>:/W0> $<$<NOT:$<C_COMPILER_ID:MSVC>>:-w>)
+target_link_libraries(${CMAKE_PROJECT_NAME} PRIVATE vendored-deps)
+
+target_sources(
+  ${CMAKE_PROJECT_NAME}
+  PRIVATE src/plugin-main.c src/meter.c src/tap.c src/protocol.c
+)
+
+if(WIN32)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/server-win.c)
+endif()
 
 set_target_properties_plugin(${CMAKE_PROJECT_NAME} PROPERTIES OUTPUT_NAME ${_name})

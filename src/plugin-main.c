@@ -1,6 +1,6 @@
 /*
-Plugin Name
-Copyright (C) <Year> <Developer> <Email Address>
+Mixer Bridge
+Copyright (C) 2026 HolyGrail
 
 This program is free software; you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
@@ -19,16 +19,28 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <obs-module.h>
 #include <plugin-support.h>
 
+#include "server.h"
+
 OBS_DECLARE_MODULE()
 OBS_MODULE_USE_DEFAULT_LOCALE(PLUGIN_NAME, "en-US")
 
+const char *obs_module_description(void)
+{
+	return "Exports audio mixer loudness to external processes and accepts mixer control requests";
+}
+
 bool obs_module_load(void)
 {
+	if (!server_start()) {
+		obs_log(LOG_ERROR, "failed to start server");
+		return false;
+	}
 	obs_log(LOG_INFO, "plugin loaded successfully (version %s)", PLUGIN_VERSION);
 	return true;
 }
 
 void obs_module_unload(void)
 {
+	server_stop();
 	obs_log(LOG_INFO, "plugin unloaded");
 }
