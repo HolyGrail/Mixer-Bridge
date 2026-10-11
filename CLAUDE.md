@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 概要
 
-OBS Studio 用プラグイン（C、GPL-2.0-or-later）。音声ミキサーのラウドネスを EBU R 128 で計測して外部プロセスへ送り、音量とフィルタ設定の取得・変更を受け付ける。UI は持たない。通信は Windows の名前付きパイプ `\.\pipe\mixer-bridge` で、1 行 1 JSON。構成は [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) をそのまま使っている。
+OBS Studio 用プラグイン（C、GPL-2.0-or-later）。音声ミキサーのラウドネスを EBU R 128 で計測して外部プロセスへ送り、音量とフィルタ設定の取得・変更を受け付ける。UI は持たない。通信は Windows の名前付きパイプ `\\.\pipe\mixer-bridge` で、1 行 1 JSON。構成は [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) をそのまま使っている。
 
 ソースのコメント、README、docs は日本語で書く。英語にしない。
 
 ## ビルド
 
-依存（OBS 31.1.1 のヘッダー、obs-deps）は `buildspec.json` に基づき、configure 時に `.deps/` へ自動ダウンロードされる。
+Windows と macOS では、依存（OBS 31.1.1 のヘッダー、obs-deps）が `buildspec.json` に基づき configure 時に `.deps/` へ自動ダウンロードされる。Linux はこの仕組みを使わず、システムにインストール済みの libobs を `find_package` で探す（`cmake/linux/defaults.cmake`）。CI の Ubuntu ジョブは `.github/scripts/build-ubuntu` が OBS を入れてから configure する。
 
 ```bash
 cmake --preset windows-x64 -G "Visual Studio 18 2026"
@@ -36,9 +36,9 @@ node examples/minimal-client.mjs "マイク"
 
 ## フォーマット（CI で検査される）
 
-- C ソース: clang-format（`.clang-format`、幅 120、タブ幅 8）。対象は `src/**/*.{c,h}` のみ。`deps/` は対象外で、編集もしない
+- C ソース: clang-format（`.clang-format`、幅 120、タブ幅 8）。ローカルのスクリプトは引数なしだと `src/**/*.{c,h}` だけを見るが、CI は PR で変更された `*.c` / `*.h` を `deps/` も含めて全部検査する。`deps/` は編集しない。上流のバージョンを差し替えるときは、差し替えたファイルも clang-format を通さないと CI が落ちる
 - CMake: gersemi（`.gersemirc`、幅 120、インデント 2）。対象は `CMakeLists.txt` と `cmake/**`
-- CI は clang-format **19.1.1 固定**で、Linux 上の zsh スクリプト `build-aux/run-clang-format --check` を走らせる。Windows では VS 同梱の clang-format を直接使う（バージョン差で結果がずれることがあるので、CI の結果を正とする）:
+- CI は clang-format **19.1.1 固定**で、Linux 上の zsh スクリプト `build-aux/run-clang-format --check --fail-error` を走らせる（`--fail-error` を付けないと、差分があっても終了コードは 0 になる）。Windows では VS 同梱の clang-format を直接使う（バージョン差で結果がずれることがあるので、CI の結果を正とする）:
 
 ```bash
 "/c/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/Llvm/x64/bin/clang-format.exe" -style=file -i src/*.c src/*.h
