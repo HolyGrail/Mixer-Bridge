@@ -22,7 +22,7 @@ The first two commands configure and compile the plugin. The client requires Nod
 
 Follow `.clang-format`: tabs with eight-column indentation, a 120-column limit, and function opening braces on separate lines. Use `snake_case` identifiers, module prefixes such as `meter_` and `session_`, and uppercase constants. CMake uses two-space indentation via `.gersemirc`.
 
-CI uses clang-format 19 and gersemi. On Linux/macOS with zsh and the formatters installed, check with `./build-aux/run-clang-format --check` and `./build-aux/run-gersemi --check`.
+CI uses clang-format 19 and gersemi. On Linux/macOS with zsh and the formatters installed, check with `./build-aux/run-clang-format --check --fail-error` and `./build-aux/run-gersemi --check --fail-error`.
 
 ## Testing Guidelines
 
