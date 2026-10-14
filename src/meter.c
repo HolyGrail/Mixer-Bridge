@@ -65,6 +65,8 @@ struct meter {
 	/* 帯域別レベル用に全チャンネルを平均したモノラル。quality が NULL なら使わない */
 	float *mono;
 	size_t buffer_frames;
+	/* 購読開始（または meter_reset）から足したフレーム数。LRA の最初の 3 秒ブロックが揃ったかの判定に使う */
+	uint64_t total_frames;
 	struct quality_stats *quality; /* NULL なら集めない */
 };
 
@@ -191,6 +193,7 @@ void meter_add_planar(struct meter *m, const float *const *planes, uint32_t fram
 		quality_run_bands(q, m->mono, frames, m->channels);
 	}
 	ebur128_add_frames_float(m->state, m->buffer, frames);
+	m->total_frames += frames;
 	pthread_mutex_unlock(&m->mutex);
 }
 
@@ -219,16 +222,20 @@ void meter_read(struct meter *m, struct meter_result *out)
 	struct quality_stats *q = m->quality;
 	out->has_quality = q != NULL;
 	if (q) {
-		/* ebur128 はゲートに掛かるブロックがないと LRA を 0 で返すので、integrated が無音なら無音にそろえる */
+		/* ebur128 は LRA 用の 3 秒ブロックが 1 つも無いと（開始から 3 秒未満、または全ブロックがゲート未満）
+		   0 を返すので、3 秒分のフレームが揃う前と integrated が無音のときは無音にそろえる */
 		double lra;
-		if (!isfinite(out->integrated) || ebur128_loudness_range(m->state, &lra) != EBUR128_SUCCESS)
+		if (m->total_frames < (uint64_t)m->sample_rate * 3 || !isfinite(out->integrated) ||
+		    ebur128_loudness_range(m->state, &lra) != EBUR128_SUCCESS)
 			lra = -INFINITY;
 		out->quality.lra = lra;
 		out->quality.sample_peak = to_db(q->peak);
 		out->quality.clip_ratio = q->samples ? (double)q->clipped / (double)q->samples : 0.0;
+		/* 区間の入力が全部 0 なら無音にする。ANTI_DENORMAL とフィルタの残響だけの微小な出力を実音として出さない */
+		bool heard = q->band_frames > 0 && q->peak > 0.0f;
 		for (int b = 0; b < METER_BANDS; b++) {
-			out->quality.bands[b] = q->band_frames ? to_db(sqrt(q->band_energy[b] / (double)q->band_frames))
-							       : -INFINITY;
+			out->quality.bands[b] = heard ? to_db(sqrt(q->band_energy[b] / (double)q->band_frames))
+						      : -INFINITY;
 		}
 		quality_clear_interval(q);
 	}
@@ -243,6 +250,7 @@ void meter_reset(struct meter *m)
 		ebur128_destroy(&m->state);
 		m->state = fresh;
 	}
+	m->total_frames = 0;
 	if (m->quality)
 		quality_clear_interval(m->quality);
 	pthread_mutex_unlock(&m->mutex);
