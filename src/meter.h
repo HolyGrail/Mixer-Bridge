@@ -24,18 +24,37 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 /* EBU R 128 のラウドネス計。音声スレッドから追加し、通信スレッドから読む */
 struct meter;
 
+/* 帯域別レベルの帯域数。境界は meter_band_edges_hz */
+#define METER_BANDS 5
+extern const double meter_band_edges_hz[METER_BANDS + 1];
+
+/* 品質統計。gain を掛ける前（フィルタ後・フェーダー前）の音で測る。lra だけは ebur128 の計と同じ音（gain 後） */
+struct meter_quality {
+	/* 購読開始から積算したラウドネスレンジ（LU）。無音は -INFINITY */
+	double lra;
+	/* 以下は直前の meter_read からの区間の値。無音・未計測は -INFINITY */
+	double sample_peak;        /* dBFS */
+	double clip_ratio;         /* 0〜1。区間にサンプルがなければ 0 */
+	double bands[METER_BANDS]; /* 帯域ごとの RMS（dBFS） */
+};
+
 struct meter_result {
 	/* 無音や未計測は -INFINITY */
 	double momentary;
 	double short_term;
 	double integrated;
 	double true_peak;
+	/* meter_create で quality を頼んだときだけ有効 */
+	bool has_quality;
+	struct meter_quality quality;
 };
 
-struct meter *meter_create(uint32_t channels, uint32_t sample_rate);
+/* quality を true にすると品質統計も集める（音声スレッドの負荷が増える） */
+struct meter *meter_create(uint32_t channels, uint32_t sample_rate, bool quality);
 void meter_destroy(struct meter *m);
 
-/* planar float の音声を gain 倍して足す */
+/* planar float の音声を gain 倍して足す。品質統計は gain を掛ける前の値で数える */
 void meter_add_planar(struct meter *m, const float *const *planes, uint32_t frames, float gain);
+/* 読むと、区間ごとの品質統計（sample_peak、clip_ratio、bands）は 0 に戻る */
 void meter_read(struct meter *m, struct meter_result *out);
 void meter_reset(struct meter *m);

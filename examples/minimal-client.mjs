@@ -2,7 +2,7 @@
 // Node.js 18 以降で、追加のライブラリなしに動きます。
 //
 //   node examples/minimal-client.mjs            ソース一覧と、トラック1 のラウドネスを 5 秒表示
-//   node examples/minimal-client.mjs "マイク"   そのソースのラウドネスも表示
+//   node examples/minimal-client.mjs "マイク"   そのソースのラウドネスと品質統計も表示
 
 import net from "node:net";
 import readline from "node:readline";
@@ -30,6 +30,14 @@ lines.on("line", (line) => {
       `${msg.data.time.toFixed(1).padStart(5)}s  トラック1 ${fmt(mix.momentary)} LUFS  ピーク ${fmt(mix.true_peak)} dBTP` +
         (src ? `  /  ${sourceName} ${fmt(src.momentary)} LUFS` : ""),
     );
+    // quality は subscribe_meters に quality: true を渡したときだけ付く
+    const q = src?.quality;
+    if (q) {
+      console.log(
+        `        LRA ${fmt(q.lra)} LU  サンプルピーク ${fmt(q.sample_peak)} dBFS` +
+          `  クリップ ${(q.clip_ratio * 100).toFixed(1).padStart(5)}%  帯域 [${q.bands.map(fmt).join(" ")}] dBFS`,
+      );
+    }
     return;
   }
   const waiter = pending.get(msg.id);
@@ -53,5 +61,12 @@ for (const s of sources) {
 }
 
 const target = sources.find((s) => s.name === sourceName);
-await call("subscribe_meters", { interval_ms: 500, mixes: [1], sources: target ? [target.uuid] : [] });
+const sub = await call("subscribe_meters", {
+  interval_ms: 500,
+  mixes: [1],
+  sources: target ? [target.uuid] : [],
+  quality: true,
+});
+// 帯域の境界は結果で返る。bands の i 番目は band_edges_hz[i]〜band_edges_hz[i + 1] の帯域
+console.log(`帯域の境界: ${sub.quality.band_edges_hz.join(" / ")} Hz`);
 setTimeout(() => socket.end(), 5000);
