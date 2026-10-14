@@ -38,14 +38,15 @@ struct tap {
 	DARRAY(struct source_tap *) sources;
 	DARRAY(struct mix_tap *) mixes;
 	uint64_t started_ns;
+	bool quality;
 };
 
-static struct meter *new_meter(void)
+static struct meter *new_meter(bool quality)
 {
 	struct obs_audio_info oai;
 	if (!obs_get_audio_info(&oai))
 		return NULL;
-	return meter_create((uint32_t)get_audio_channels(oai.speakers), oai.samples_per_sec);
+	return meter_create((uint32_t)get_audio_channels(oai.speakers), oai.samples_per_sec, quality);
 }
 
 /* ソースの音声はフィルタを通った後、フェーダーの前に届くので、ここでフェーダーとミュートを掛ける */
@@ -63,10 +64,11 @@ static void mix_audio(void *param, size_t mix_idx, struct audio_data *data)
 	meter_add_planar(mt->meter, (const float *const *)data->data, data->frames, 1.0f);
 }
 
-struct tap *tap_create(void)
+struct tap *tap_create(bool quality)
 {
 	struct tap *t = bzalloc(sizeof(*t));
 	t->started_ns = os_gettime_ns();
+	t->quality = quality;
 	return t;
 }
 
@@ -79,7 +81,7 @@ void tap_add_source(struct tap *t, const char *uuid)
 		obs_source_release(source);
 		return;
 	}
-	struct meter *meter = new_meter();
+	struct meter *meter = new_meter(t->quality);
 	if (!meter) {
 		obs_source_release(source);
 		return;
@@ -97,7 +99,7 @@ void tap_add_mix(struct tap *t, int mix)
 {
 	if (mix < 1 || mix > MAX_AUDIO_MIXES)
 		return;
-	struct meter *meter = new_meter();
+	struct meter *meter = new_meter(false);
 	if (!meter)
 		return;
 	struct mix_tap *mt = bzalloc(sizeof(*mt));

@@ -31,7 +31,8 @@ struct tap_source_result {
 	struct meter_result result;
 };
 
-struct tap *tap_create(void);
+/* quality を true にすると、ソースの計で品質統計も集める（ミックスでは集めない） */
+struct tap *tap_create(bool quality);
 /* 取り付けに失敗したソース（見つからない、音声がない）は黙って飛ばす */
 void tap_add_source(struct tap *t, const char *uuid);
 /* mix は 1〜6 */

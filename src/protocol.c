@@ -246,8 +246,9 @@ static char *do_subscribe(struct session *s, const cJSON *id, const cJSON *param
 	if (ms < 100 || ms > 1000)
 		return fail(id, "invalid_params", "interval_ms must be between 100 and 1000");
 
+	bool quality = cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(params, "quality"));
 	tap_destroy(s->tap);
-	s->tap = tap_create();
+	s->tap = tap_create(quality);
 	const cJSON *item;
 	cJSON_ArrayForEach(item, cJSON_GetObjectItemCaseSensitive(params, "sources"))
 	{
@@ -266,7 +267,13 @@ static char *do_subscribe(struct session *s, const cJSON *id, const cJSON *param
 	}
 	s->interval_ms = ms;
 	s->next_meters_ns = os_gettime_ns() + (uint64_t)ms * 1000000;
-	return reply(id, NULL);
+	if (!quality)
+		return reply(id, NULL);
+	/* 帯域の境界を返す。クライアントはこれで bands を解釈するので、境界を変えてもクライアントは壊れない */
+	cJSON *result = cJSON_CreateObject();
+	cJSON *q = cJSON_AddObjectToObject(result, "quality");
+	cJSON_AddItemToObject(q, "band_edges_hz", cJSON_CreateDoubleArray(meter_band_edges_hz, METER_BANDS + 1));
+	return reply(id, result);
 }
 
 static char *do_unsubscribe(struct session *s, const cJSON *id)
@@ -338,6 +345,20 @@ static void add_result(cJSON *obj, const struct meter_result *r)
 	add_db(obj, "short_term", r->short_term);
 	add_db(obj, "integrated", r->integrated);
 	add_db(obj, "true_peak", r->true_peak);
+	if (!r->has_quality)
+		return;
+	const struct meter_quality *q = &r->quality;
+	cJSON *quality = cJSON_AddObjectToObject(obj, "quality");
+	add_db(quality, "lra", q->lra);
+	add_db(quality, "sample_peak", q->sample_peak);
+	/* 1 秒間隔でも 1 サンプルのクリップが 0 に丸まらない桁数にする */
+	cJSON_AddNumberToObject(quality, "clip_ratio", round(q->clip_ratio * 1e6) / 1e6);
+	cJSON *bands = cJSON_AddArrayToObject(quality, "bands");
+	for (int b = 0; b < METER_BANDS; b++) {
+		cJSON_AddItemToArray(bands, isfinite(q->bands[b])
+						    ? cJSON_CreateNumber(round(q->bands[b] * 100.0) / 100.0)
+						    : cJSON_CreateNull());
+	}
 }
 
 char *session_meters_event(struct session *s)
