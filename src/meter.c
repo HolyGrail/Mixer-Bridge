@@ -52,6 +52,8 @@ struct quality_stats {
 	float peak;       /* 区間のサンプルピーク（絶対値） */
 	uint64_t clipped; /* 区間で CLIP_THRESHOLD 以上だったサンプル数 */
 	uint64_t samples; /* 区間の全サンプル数（全チャンネル分） */
+	/* ebur128 が LRA のヒストグラムに入れた（絶対ゲート -70 LUFS 以上の）3 秒ブロックの数。meter_reset まで積算 */
+	uint64_t lra_blocks;
 };
 
 struct meter {
@@ -65,8 +67,9 @@ struct meter {
 	/* 帯域別レベル用に全チャンネルを平均したモノラル。quality が NULL なら使わない */
 	float *mono;
 	size_t buffer_frames;
-	/* 購読開始（または meter_reset）から足したフレーム数。LRA の最初の 3 秒ブロックが揃ったかの判定に使う */
+	/* 購読開始（または meter_reset）から足したフレーム数と、ebur128 が LRA のブロックを評価する 100 ms の刻み */
 	uint64_t total_frames;
+	uint64_t samples_in_100ms;
 	struct quality_stats *quality; /* NULL なら集めない */
 };
 
@@ -110,6 +113,7 @@ struct meter *meter_create(uint32_t channels, uint32_t sample_rate, bool quality
 	m->channels = channels;
 	m->sample_rate = sample_rate;
 	m->mode = METER_MODE | (quality ? EBUR128_MODE_LRA : 0);
+	m->samples_in_100ms = (sample_rate + 5) / 10; /* ebur128_init と同じ式 */
 	m->state = ebur128_init(channels, sample_rate, m->mode);
 	if (!m->state || pthread_mutex_init(&m->mutex, NULL) != 0) {
 		if (m->state)
@@ -169,6 +173,33 @@ static void quality_run_bands(struct quality_stats *q, const float *mono, uint32
 	q->band_frames += frames;
 }
 
+/* m->buffer の frames フレームを ebur128 に渡す。
+   ebur128 は開始から 3 秒以降、100 ms の境界ごとに直前 3 秒のラウドネスを LRA のヒストグラムに入れる（絶対ゲート
+   -70 LUFS 未満は捨てる）が、入れたブロックの数は外から読めない。そこで quality のときは境界で渡すのを区切り、
+   境界の直後に同じ窓の短期ラウドネスを読んで、ゲートを通ったブロックを自分でも数える */
+static void feed(struct meter *m, uint32_t frames)
+{
+	const float *src = m->buffer;
+	while (frames > 0) {
+		uint32_t n = frames;
+		if (m->quality) {
+			uint64_t to_boundary = m->samples_in_100ms - m->total_frames % m->samples_in_100ms;
+			if (to_boundary < n)
+				n = (uint32_t)to_boundary;
+		}
+		ebur128_add_frames_float(m->state, src, n);
+		m->total_frames += n;
+		src += (size_t)n * m->channels;
+		frames -= n;
+		if (m->quality && m->total_frames % m->samples_in_100ms == 0 &&
+		    m->total_frames >= m->samples_in_100ms * 30) {
+			double shortterm;
+			if (ebur128_loudness_shortterm(m->state, &shortterm) == EBUR128_SUCCESS && shortterm >= -70.0)
+				m->quality->lra_blocks++;
+		}
+	}
+}
+
 void meter_add_planar(struct meter *m, const float *const *planes, uint32_t frames, float gain)
 {
 	pthread_mutex_lock(&m->mutex);
@@ -192,8 +223,7 @@ void meter_add_planar(struct meter *m, const float *const *planes, uint32_t fram
 		q->samples += (uint64_t)frames * m->channels;
 		quality_run_bands(q, m->mono, frames, m->channels);
 	}
-	ebur128_add_frames_float(m->state, m->buffer, frames);
-	m->total_frames += frames;
+	feed(m, frames);
 	pthread_mutex_unlock(&m->mutex);
 }
 
@@ -222,11 +252,10 @@ void meter_read(struct meter *m, struct meter_result *out)
 	struct quality_stats *q = m->quality;
 	out->has_quality = q != NULL;
 	if (q) {
-		/* ebur128 は LRA 用の 3 秒ブロックが 1 つも無いと（開始から 3 秒未満、または全ブロックがゲート未満）
-		   0 を返すので、3 秒分のフレームが揃う前と integrated が無音のときは無音にそろえる */
+		/* ebur128 はヒストグラムに 3 秒ブロックが 1 つも無いと（開始から 3 秒未満、または全ブロックがゲート未満）
+		   LRA を 0 で返すので、feed で数えたブロックが無いうちは無音にする */
 		double lra;
-		if (m->total_frames < (uint64_t)m->sample_rate * 3 || !isfinite(out->integrated) ||
-		    ebur128_loudness_range(m->state, &lra) != EBUR128_SUCCESS)
+		if (q->lra_blocks == 0 || ebur128_loudness_range(m->state, &lra) != EBUR128_SUCCESS)
 			lra = -INFINITY;
 		out->quality.lra = lra;
 		out->quality.sample_peak = to_db(q->peak);
@@ -251,7 +280,9 @@ void meter_reset(struct meter *m)
 		m->state = fresh;
 	}
 	m->total_frames = 0;
-	if (m->quality)
+	if (m->quality) {
 		quality_clear_interval(m->quality);
+		m->quality->lra_blocks = 0;
+	}
 	pthread_mutex_unlock(&m->mutex);
 }
