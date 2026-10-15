@@ -35,7 +35,7 @@ lines.on("line", (line) => {
     if (q) {
       console.log(
         `        LRA ${fmt(q.lra)} LU  サンプルピーク ${fmt(q.sample_peak)} dBFS` +
-          `  クリップ ${(q.clip_ratio * 100).toFixed(1).padStart(5)}%  帯域 [${q.bands.map(fmt).join(" ")}] dBFS`,
+          `  クリップ ${(q.clip_ratio * 100).toFixed(1).padStart(5)}%  帯域 ${q.bands === null ? "無音" : `[${q.bands.map(fmt).join(" ")}] dBFS`}`,
       );
     }
     return;

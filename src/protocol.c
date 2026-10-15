@@ -353,6 +353,14 @@ static void add_result(cJSON *obj, const struct meter_result *r)
 	add_db(quality, "sample_peak", q->sample_peak);
 	/* 1 秒間隔でも 1 サンプルのクリップが 0 に丸まらない桁数にする */
 	cJSON_AddNumberToObject(quality, "clip_ratio", round(q->clip_ratio * 1e6) / 1e6);
+	/* meter.c は無音の区間で全帯域を -INFINITY にする。そのときは要素ごとでなく配列ごと null にする */
+	bool any_finite = false;
+	for (int b = 0; b < METER_BANDS; b++)
+		any_finite = any_finite || isfinite(q->bands[b]);
+	if (!any_finite) {
+		cJSON_AddNullToObject(quality, "bands");
+		return;
+	}
 	cJSON *bands = cJSON_AddArrayToObject(quality, "bands");
 	for (int b = 0; b < METER_BANDS; b++) {
 		cJSON_AddItemToArray(bands, isfinite(q->bands[b])
