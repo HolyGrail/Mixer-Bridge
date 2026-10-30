@@ -16,7 +16,7 @@ You should have received a copy of the GNU General Public License along
 with this program. If not, see <https://www.gnu.org/licenses/>
 */
 
-/* Windows 以外ではまだ通信できない（名前付きパイプの代わりに Unix ドメインソケットを使う予定） */
+/* Linux ではまだ通信できない（macOS と同じ server-unix.c を使う予定） */
 
 #include "server.h"
 

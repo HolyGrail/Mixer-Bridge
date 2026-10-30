@@ -46,6 +46,8 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/plugin-main.c src/meter.c src/t
 
 if(WIN32)
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/server-win.c)
+elseif(APPLE)
+  target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/server-unix.c)
 else()
   target_sources(${CMAKE_PROJECT_NAME} PRIVATE src/server-stub.c)
 endif()

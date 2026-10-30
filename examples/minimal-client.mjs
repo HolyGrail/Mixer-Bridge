@@ -5,10 +5,15 @@
 //   node examples/minimal-client.mjs "マイク"   そのソースのラウドネスと品質統計も表示
 
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 
 const sourceName = process.argv[2];
-const socket = net.connect("\\\\.\\pipe\\mixer-bridge");
+// 接続先は OS で変わる（Windows は名前付きパイプ、macOS は $TMPDIR の Unix ドメインソケット）
+const address =
+  process.platform === "win32" ? "\\\\.\\pipe\\mixer-bridge" : path.join(os.tmpdir(), "mixer-bridge.sock");
+const socket = net.connect(address);
 const lines = readline.createInterface({ input: socket });
 const pending = new Map();
 let nextId = 1;
