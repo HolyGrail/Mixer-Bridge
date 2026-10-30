@@ -27,7 +27,9 @@ OBS Studio の音声ミキサーの計測値を外部プロセスに送り、外
 
 ## インストール（macOS）
 
-リリースの配布物はまだ Windows 向けだけです。後述の手順でビルドし、できた `mixer-bridge.plugin` を `~/Library/Application Support/obs-studio/plugins/` に置いて、OBS を再起動してください。
+[リリース](https://github.com/HolyGrail/Mixer-Bridge/releases)から `mixer-bridge-<バージョン>-macos-universal.pkg` を取得して開き、インストールします。`~/Library/Application Support/obs-studio/plugins/mixer-bridge.plugin` に入ります。OBS を起動中なら再起動してください。
+
+自分でビルドした場合は、できた `mixer-bridge.plugin` を同じフォルダーに置きます。
 
 ## 通信仕様とクライアントの例
 

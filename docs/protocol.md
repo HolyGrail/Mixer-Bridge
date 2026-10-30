@@ -75,7 +75,7 @@ Mixer Bridge は OBS Studio の中で動き、音声ミキサーの計測値を�
 | `protocol` | 数値 | クライアントが話すプロトコルのバージョン（今は `1`） |
 | `client` | 文字列 | クライアントの名前とバージョン（ログ用） |
 
-結果: `{"protocol": 1, "plugin": "0.2.0", "obs": "32.2.2"}`
+結果: `{"protocol": 1, "plugin": "0.3.0", "obs": "32.2.2"}`
 
 ### `list_sources`
 
