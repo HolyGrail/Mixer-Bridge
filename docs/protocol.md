@@ -6,7 +6,9 @@ Mixer Bridge は OBS Studio の中で動き、音声ミキサーの計測値を�
 
 ## 接続
 
-- Windows の名前付きパイプ `\\.\pipe\mixer-bridge` に接続します。
+- 接続先は OS で変わります。
+  - Windows: 名前付きパイプ `\\.\pipe\mixer-bridge`
+  - macOS: Unix ドメインソケット `$TMPDIR/mixer-bridge.sock`。`$TMPDIR` はユーザーごとのディレクトリ（`/var/folders/…/T/`）で、OBS とクライアントが同じユーザーで動いていれば同じ値になります（Node.js なら `os.tmpdir()`）。`TMPDIR` が無い環境では `/tmp/mixer-bridge.sock` です
 - 同じユーザーで動いているプロセスだけが接続できます。
 - 複数のクライアントが同時に接続できます。計測の購読はクライアントごとに独立しています。
 - OBS WebSocket の設定やパスワードは不要です。

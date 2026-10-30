@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Mixer Bridge is a headless OBS Studio plugin written in C. `src/` contains plugin lifecycle (`plugin-main.c`), loudness metering (`meter.c`), audio capture (`tap.c`), JSON protocol handling (`protocol.c`), and platform servers. Windows uses `server-win.c`; macOS/Linux use `server-stub.c` and currently support builds only.
+Mixer Bridge is a headless OBS Studio plugin written in C. `src/` contains plugin lifecycle (`plugin-main.c`), loudness metering (`meter.c`), audio capture (`tap.c`), JSON protocol handling (`protocol.c`), and platform servers. Windows uses `server-win.c` (named pipe), macOS uses `server-unix.c` (Unix domain socket at `$TMPDIR/mixer-bridge.sock`), and Linux uses `server-stub.c`, which currently supports builds only.
 
 `deps/` vendors libebur128 and cJSON; preserve their licenses and avoid unrelated edits. `data/locale/` holds OBS translations. `docs/protocol.md` describes the wire protocol, and `examples/minimal-client.mjs` demonstrates it. CMake helpers live in `cmake/`; CI and packaging live in `.github/`. Generated builds use `build_*` directories.
 

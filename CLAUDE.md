@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 概要
 
-OBS Studio 用プラグイン（C、GPL-2.0-or-later）。音声ミキサーのラウドネスを EBU R 128 で計測して外部プロセスへ送り、音量とフィルタ設定の取得・変更を受け付ける。UI は持たない。通信は Windows の名前付きパイプ `\\.\pipe\mixer-bridge` で、1 行 1 JSON。構成は [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) をそのまま使っている。
+OBS Studio 用プラグイン（C、GPL-2.0-or-later）。音声ミキサーのラウドネスを EBU R 128 で計測して外部プロセスへ送り、音量とフィルタ設定の取得・変更を受け付ける。UI は持たない。通信は Windows では名前付きパイプ `\\.\pipe\mixer-bridge`、macOS では Unix ドメインソケット `$TMPDIR/mixer-bridge.sock` で、1 行 1 JSON。構成は [obs-plugintemplate](https://github.com/obsproject/obs-plugintemplate) をそのまま使っている。
 
 ソースのコメント、README、docs は日本語で書く。英語にしない。
 
@@ -24,7 +24,8 @@ cmake --build build_x64 --config RelWithDebInfo
 - インストール先の形（OBS に置くフォルダー構成）を得るには:
   `cmake --install build_x64 --prefix release/RelWithDebInfo --config RelWithDebInfo`
   → `release/RelWithDebInfo/mixer-bridge/{bin/64bit/mixer-bridge.dll, data/}`。これを `C:\ProgramData\obs-studio\plugins\mixer-bridge` に置く
-- macOS / Linux はビルドだけ通る（`server-stub.c`）。通信は未実装
+- macOS: `cmake --preset macos && cmake --build --preset macos` → `build_macos/RelWithDebInfo/mixer-bridge.plugin`。これを `~/Library/Application Support/obs-studio/plugins/` に置く。CI は `macos-ci` プリセット（`-Werror`）
+- Linux はビルドだけ通る（`server-stub.c`）。通信は未実装
 
 ## テスト
 
@@ -49,11 +50,12 @@ node examples/minimal-client.mjs "マイク"
 データの流れ（`src/` の 5 モジュール）:
 
 ```
-外部プロセス ⇄ server-win.c ⇄ protocol.c ⇄ tap.c ⇄ meter.c（libebur128）
+外部プロセス ⇄ server-win.c / server-unix.c ⇄ protocol.c ⇄ tap.c ⇄ meter.c（libebur128）
    名前付きパイプ    行の分割      JSON-RPC 風      OBS 音声コールバック
 ```
 
-- **server-win.c**: listen スレッドが `CreateNamedPipe` でクライアントごとにパイプを作り、1 クライアントに 1 スレッドを割り当てる。読み込みは overlapped I/O で、`session_meters_due_ms()` の残り時間を `WaitForMultipleObjects` のタイムアウトに使い、読み込み待ちと meters イベント送信を同じループで回す。SDDL で「同じユーザーと SYSTEM のみ」に制限する。`server.h` の 2 関数だけが公開 API で、他プラットフォームは `server-stub.c` で差し替える
+- **server-win.c**: listen スレッドが `CreateNamedPipe` でクライアントごとにパイプを作り、1 クライアントに 1 スレッドを割り当てる。読み込みは overlapped I/O で、`session_meters_due_ms()` の残り時間を `WaitForMultipleObjects` のタイムアウトに使い、読み込み待ちと meters イベント送信を同じループで回す。SDDL で「同じユーザーと SYSTEM のみ」に制限する。`server.h` の 2 関数だけが公開 API で、他プラットフォームは差し替える
+- **server-unix.c**（macOS）: server-win.c と同じ構成を Unix ドメインソケットで作る。停止は self-pipe の書き込み側を閉じて、`poll` している全スレッドを起こす。`SO_NOSIGPIPE` を付けないと、切断済みのクライアントへの書き込みで SIGPIPE が出て OBS ごと落ちる。ソケットは 0600 で作り、`getpeereid` で同じユーザーかも確かめる。Linux は `server-stub.c`
 - **protocol.c**: `struct session` が 1 クライアントの状態（`hello` 済みか、購読中の `tap`、送信間隔）。`session_handle()` が 1 行を受けて応答 JSON を返す。`hello` 以外は `hello` 前に拒否する。OBS API はここから直接呼ぶ（OBS の API はスレッドセーフなので別スレッドから呼んで良い）
 - **tap.c**: 購読 1 件分。ソースには `obs_source_add_audio_capture_callback`（フィルタ後・フェーダー前の音なので、ここでフェーダーとミュートを掛ける）、音声トラックには `obs_add_raw_audio_callback` を取り付け、それぞれに `meter` を 1 つ持つ。`subscribe_meters` を再送すると tap を作り直す
 - **meter.c**: libebur128 の薄いラッパー。planar → interleaved に並べ替えて投入する。**音声スレッドから書き、通信スレッドから読む**ので内部に mutex を持つ。無音・未計測は `-INFINITY` で返し、protocol.c の `add_db()` が JSON の `null` に変える
