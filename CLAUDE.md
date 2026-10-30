@@ -55,7 +55,7 @@ node examples/minimal-client.mjs "マイク"
 ```
 
 - **server-win.c**: listen スレッドが `CreateNamedPipe` でクライアントごとにパイプを作り、1 クライアントに 1 スレッドを割り当てる。読み込みは overlapped I/O で、`session_meters_due_ms()` の残り時間を `WaitForMultipleObjects` のタイムアウトに使い、読み込み待ちと meters イベント送信を同じループで回す。SDDL で「同じユーザーと SYSTEM のみ」に制限する。`server.h` の 2 関数だけが公開 API で、他プラットフォームは差し替える
-- **server-unix.c**（macOS）: server-win.c と同じ構成を Unix ドメインソケットで作る。停止は self-pipe の書き込み側を閉じて、`poll` している全スレッドを起こす。`SO_NOSIGPIPE` を付けないと、切断済みのクライアントへの書き込みで SIGPIPE が出て OBS ごと落ちる。ソケットは 0600 で作り、`getpeereid` で同じユーザーかも確かめる。Linux は `server-stub.c`
+- **server-unix.c**（macOS）: server-win.c と同じ構成を Unix ドメインソケットで作る。停止は self-pipe の書き込み側を閉じて、`poll` している全スレッドを起こす。`SO_NOSIGPIPE` を付けないと、切断済みのクライアントへの書き込みで SIGPIPE が出て OBS ごと落ちる。ソケットは 0600 で作り、`getpeereid` で同じユーザーかも確かめる。同時に起動した OBS が互いのソケットを消さないよう、`$TMPDIR/mixer-bridge.lock` を `flock` した側だけがソケットのパスを扱う（ロックファイルは消さない）。停止時は各クライアントの fd を `shutdown` して、書き込み途中のスレッドも起こす。Linux は `server-stub.c`
 - **protocol.c**: `struct session` が 1 クライアントの状態（`hello` 済みか、購読中の `tap`、送信間隔）。`session_handle()` が 1 行を受けて応答 JSON を返す。`hello` 以外は `hello` 前に拒否する。OBS API はここから直接呼ぶ（OBS の API はスレッドセーフなので別スレッドから呼んで良い）
 - **tap.c**: 購読 1 件分。ソースには `obs_source_add_audio_capture_callback`（フィルタ後・フェーダー前の音なので、ここでフェーダーとミュートを掛ける）、音声トラックには `obs_add_raw_audio_callback` を取り付け、それぞれに `meter` を 1 つ持つ。`subscribe_meters` を再送すると tap を作り直す
 - **meter.c**: libebur128 の薄いラッパー。planar → interleaved に並べ替えて投入する。**音声スレッドから書き、通信スレッドから読む**ので内部に mutex を持つ。無音・未計測は `-INFINITY` で返し、protocol.c の `add_db()` が JSON の `null` に変える

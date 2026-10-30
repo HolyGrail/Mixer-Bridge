@@ -25,6 +25,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/time.h>
@@ -42,6 +43,7 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #include "protocol.h"
 
 #define SOCKET_NAME "mixer-bridge.sock"
+#define LOCK_NAME "mixer-bridge.lock"
 #define BUFFER_SIZE 65536
 /* 1 行の上限。これを超える要求は切断する */
 #define MAX_LINE (1024 * 1024)
@@ -49,12 +51,16 @@ with this program. If not, see <https://www.gnu.org/licenses/>
 #define SEND_TIMEOUT_SEC 5
 
 struct client {
+	/* 閉じるのはクライアントのスレッド。停止時の shutdown と競合しないよう clients_mutex の下で触る */
 	int fd;
 	pthread_t thread;
 	volatile bool done;
 };
 
 static struct sockaddr_un addr;
+static struct dstr lock_path;
+/* ソケットのパスの持ち主であることを示すロック。OBS が落ちてもカーネルが外す */
+static int lock_fd = -1;
 static int listen_fd = -1;
 /* 停止の合図。書き込み側を閉じると、読み込み側を poll している全スレッドが起きる */
 static int stop_pipe[2] = {-1, -1};
@@ -78,6 +84,8 @@ static bool make_address(void)
 	dstr_copy(&path, dir);
 	if (dstr_end(&path) != '/')
 		dstr_cat_ch(&path, '/');
+	dstr_copy_dstr(&lock_path, &path);
+	dstr_cat(&lock_path, LOCK_NAME);
 	dstr_cat(&path, SOCKET_NAME);
 
 	bool ok = path.len < sizeof(addr.sun_path);
@@ -86,28 +94,39 @@ static bool make_address(void)
 		strcpy(addr.sun_path, path.array);
 	} else {
 		obs_log(LOG_ERROR, "socket path is too long: %s", path.array);
+		dstr_free(&lock_path);
 	}
 	dstr_free(&path);
 	return ok;
 }
 
-/* 同じパスで別の OBS が待ち受けているかを確かめる。残骸のファイルなら false */
-static bool address_in_use(void)
+static void unlock_address(void)
 {
-	int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-	if (fd < 0)
-		return false;
-	bool used = connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
-	close(fd);
-	return used;
+	if (lock_fd >= 0)
+		close(lock_fd);
+	lock_fd = -1;
+}
+
+/* 同時に起動した OBS どうしが互いのソケットを消さないよう、ロックを取った側だけがパスを扱う */
+static bool lock_address(void)
+{
+	lock_fd = open(lock_path.array, O_RDWR | O_CREAT | O_CLOEXEC, S_IRUSR | S_IWUSR);
+	if (lock_fd < 0)
+		obs_log(LOG_ERROR, "failed to open %s (%s)", lock_path.array, strerror(errno));
+	else if (flock(lock_fd, LOCK_EX | LOCK_NB) != 0)
+		obs_log(LOG_ERROR, "%s is already in use by another process", addr.sun_path);
+	else {
+		dstr_free(&lock_path);
+		return true;
+	}
+	unlock_address();
+	dstr_free(&lock_path);
+	return false;
 }
 
 static bool open_listener(void)
 {
-	if (address_in_use()) {
-		obs_log(LOG_ERROR, "%s is already in use by another process", addr.sun_path);
-		return false;
-	}
+	/* ロックを持っているので、残っているファイルは前に落ちた OBS のもの */
 	unlink(addr.sun_path);
 
 	listen_fd = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -119,15 +138,15 @@ static bool open_listener(void)
 
 	/* 作った瞬間から自分以外が開けないよう、bind の間だけ umask を絞る */
 	mode_t old_mask = umask(077);
-	bool ok = bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
+	bool bound = bind(listen_fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
 	umask(old_mask);
-	if (ok)
-		ok = chmod(addr.sun_path, S_IRUSR | S_IWUSR) == 0 && listen(listen_fd, SOMAXCONN) == 0;
+	bool ok = bound && chmod(addr.sun_path, S_IRUSR | S_IWUSR) == 0 && listen(listen_fd, SOMAXCONN) == 0;
 	if (!ok) {
 		obs_log(LOG_ERROR, "failed to listen on %s (%s)", addr.sun_path, strerror(errno));
 		close(listen_fd);
 		listen_fd = -1;
-		unlink(addr.sun_path);
+		if (bound)
+			unlink(addr.sun_path);
 	}
 	return ok;
 }
@@ -207,23 +226,42 @@ static void *client_main(void *param)
 
 	dstr_free(&pending);
 	session_destroy(s);
+	pthread_mutex_lock(&clients_mutex);
 	close(c->fd);
 	c->fd = -1;
 	c->done = true;
+	pthread_mutex_unlock(&clients_mutex);
 	return NULL;
 }
 
-/* 終わったクライアントのスレッドを回収する */
+/* 終わったクライアントのスレッドを回収する。終わり際のスレッドも mutex を取るので、join は mutex の外で行う */
 static void reap_clients(bool all)
 {
+	DARRAY(struct client *) ended;
+	da_init(ended);
 	pthread_mutex_lock(&clients_mutex);
 	for (size_t i = clients.num; i > 0; i--) {
 		struct client *c = clients.array[i - 1];
 		if (all || c->done) {
-			pthread_join(c->thread, NULL);
-			bfree(c);
+			da_push_back(ended, &c);
 			da_erase(clients, i - 1);
 		}
+	}
+	pthread_mutex_unlock(&clients_mutex);
+	for (size_t i = 0; i < ended.num; i++) {
+		pthread_join(ended.array[i]->thread, NULL);
+		bfree(ended.array[i]);
+	}
+	da_free(ended);
+}
+
+/* 書き込みの途中で止まっているスレッドも、停止の合図を待たずに抜けさせる */
+static void shutdown_clients(void)
+{
+	pthread_mutex_lock(&clients_mutex);
+	for (size_t i = 0; i < clients.num; i++) {
+		if (clients.array[i]->fd >= 0)
+			shutdown(clients.array[i]->fd, SHUT_RDWR);
 	}
 	pthread_mutex_unlock(&clients_mutex);
 }
@@ -305,7 +343,8 @@ bool server_start(void)
 		close_stop_pipe();
 		return false;
 	}
-	if (!open_listener()) {
+	if (!lock_address() || !open_listener()) {
+		unlock_address();
 		pthread_mutex_destroy(&clients_mutex);
 		close_stop_pipe();
 		return false;
@@ -315,6 +354,7 @@ bool server_start(void)
 		close(listen_fd);
 		listen_fd = -1;
 		unlink(addr.sun_path);
+		unlock_address();
 		pthread_mutex_destroy(&clients_mutex);
 		close_stop_pipe();
 		return false;
@@ -331,12 +371,14 @@ void server_stop(void)
 	close(stop_pipe[1]);
 	stop_pipe[1] = -1;
 	pthread_join(listen_thread, NULL);
+	shutdown_clients();
 	reap_clients(true);
 	da_free(clients);
 	pthread_mutex_destroy(&clients_mutex);
 	close(listen_fd);
 	listen_fd = -1;
 	unlink(addr.sun_path);
+	unlock_address();
 	close_stop_pipe();
 	running = false;
 }
